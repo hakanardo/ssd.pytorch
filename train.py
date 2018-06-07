@@ -1,3 +1,5 @@
+from torch.utils.data.sampler import RandomSampler
+
 from data import *
 from utils.augmentations import SSDAugmentation
 from layers.modules import MultiBoxLoss
@@ -15,6 +17,10 @@ import torch.utils.data as data
 import numpy as np
 import argparse
 
+
+class MyRandomSampler(RandomSampler):
+    def __iter__(self):
+        return iter(torch.randperm(len(self.data_source), device=torch.device('cpu')).tolist())
 
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
@@ -144,8 +150,9 @@ def train():
 
     data_loader = data.DataLoader(dataset, args.batch_size,
                                   num_workers=args.num_workers,
-                                  shuffle=True, collate_fn=detection_collate,
-                                  pin_memory=True)
+                                  collate_fn=detection_collate,
+                                  pin_memory=True,
+                                  sampler=MyRandomSampler(dataset))
     # create batch iterator
     batch_iterator = iter(data_loader)
     for iteration in range(args.start_iter, cfg['max_iter']):
@@ -166,10 +173,12 @@ def train():
 
         if args.cuda:
             images = Variable(images.cuda())
-            targets = [Variable(ann.cuda(), volatile=True) for ann in targets]
+            with torch.no_grad():
+                targets = [Variable(ann.cuda()) for ann in targets]
         else:
             images = Variable(images)
-            targets = [Variable(ann, volatile=True) for ann in targets]
+            with torch.no_grad():
+                targets = [Variable(ann) for ann in targets]
         # forward
         t0 = time.time()
         out = net(images)
@@ -180,12 +189,12 @@ def train():
         loss.backward()
         optimizer.step()
         t1 = time.time()
-        loc_loss += loss_l.data[0]
-        conf_loss += loss_c.data[0]
+        loc_loss += loss_l.data.item()
+        conf_loss += loss_c.data.item()
 
         if iteration % 10 == 0:
             print('timer: %.4f sec.' % (t1 - t0))
-            print('iter ' + repr(iteration) + ' || Loss: %.4f ||' % (loss.data[0]), end=' ')
+            print('iter ' + repr(iteration) + ' || Loss: %.4f ||' % (loss.data.item()), end=' ')
 
         if args.visdom:
             update_vis_plot(iteration, loss_l.data[0], loss_c.data[0],
@@ -211,7 +220,7 @@ def adjust_learning_rate(optimizer, gamma, step):
 
 
 def xavier(param):
-    init.xavier_uniform(param)
+    init.xavier_uniform_(param)
 
 
 def weights_init(m):
